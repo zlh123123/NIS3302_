@@ -286,26 +286,33 @@ void readRulesFromFile(const char *filename)
     {
         isEmpty = false;
         Rule *rule = malloc(sizeof(Rule));
-        rule->protocol_type = malloc(sizeof(char) * 10);
-        rule->interface_type = malloc(sizeof(char) * 10);
-        rule->src_ip = malloc(sizeof(char) * 20);
-        rule->src_port = malloc(sizeof(char) * 10);
-        rule->dst_ip = malloc(sizeof(char) * 20);
-        rule->dst_port = malloc(sizeof(char) * 10);
-        rule->begin_time = malloc(sizeof(char) * 10);
-        rule->end_time = malloc(sizeof(char) * 10);
+        rule->protocol_type = malloc(sizeof(char) * 100);
+        rule->interface_type = malloc(sizeof(char) * 100);
+        rule->src_ip = malloc(sizeof(char) * 100);
+        rule->src_port = malloc(sizeof(char) * 100);
+        rule->dst_ip = malloc(sizeof(char) * 100);
+        rule->dst_port = malloc(sizeof(char) * 100);
+        rule->begin_time = malloc(sizeof(char) * 100);
+        rule->end_time = malloc(sizeof(char) * 100);
 
         char *id = strtok(line, ",");
         rule->id = atoi(id);
         strcpy(rule->protocol_type, strtok(NULL, ","));
         strcpy(rule->interface_type, strtok(NULL, ","));
+        strcpy(rule->src_ip, strtok(NULL, ","));
         strcpy(rule->src_port, strtok(NULL, ","));
         strcpy(rule->dst_ip, strtok(NULL, ","));
         strcpy(rule->dst_port, strtok(NULL, ","));
-        strcpy(rule->src_ip, strtok(NULL, ","));
         strcpy(rule->begin_time, strtok(NULL, ","));
         strcpy(rule->end_time, strtok(NULL, ","));
         char *action = strtok(NULL, ",");
+        if (action != NULL && strlen(action) > 0)
+        {
+            if (action[strlen(action) - 1] == '\n')
+            {
+                action[strlen(action) - 1] = '\0';
+            }
+        }
         rule->action = strcmp(action, "1") == 0 ? true : false;
 
         if (!isValidProtocolType(rule->protocol_type) || !isValidInterfaceType(rule->interface_type) || !isValidIP(rule->src_ip) || !isValidPort(rule->src_port) || !isValidIP(rule->dst_ip) || !isValidPort(rule->dst_port) || !isValidTime(rule->begin_time) || !isValidTime(rule->end_time) || !isBeginTimeBeforeEndTime(rule->begin_time, rule->end_time))
@@ -392,9 +399,12 @@ bool writeRulesToDevice()
         char *begin_time = strtok(NULL, ",");
         char *end_time = strtok(NULL, ",");
         char *action = strtok(NULL, ",");
-        if (action[strlen(action) - 1] == '\n')
+        if (action != NULL && strlen(action) > 0)
         {
-            action[strlen(action) - 1] = '\0';
+            if (action[strlen(action) - 1] == '\n')
+            {
+                action[strlen(action) - 1] = '\0';
+            }
         }
 
         if (strcmp(action, "1") == 0)
@@ -456,7 +466,7 @@ void displayRules()
     }
 
     // 打印表头
-    printf("%-10s %-15s %-15s %-20s %-10s %-20s %-10s %-10s %-10s %-10s\n", "ID", "Protocol Type", "Interface Type", "Source IP", "Source Port", "Destination IP", "Destination Port", "Begin Time", "End Time", "Action");
+    printf("%-10s %-20s %-20s %-20s %-20s %-20s %-20s %-20s %-20s %-10s\n", "ID", "Protocol Type", "Interface Type", "Source IP", "Source Port", "Destination IP", "Destination Port", "Begin Time", "End Time", "Action");
 
     char line[100];
     // 读取规则文件并打印规则
@@ -475,7 +485,7 @@ void displayRules()
             char *end_time = strtok(NULL, ",");
             char *action = strtok(NULL, ",");
 
-            printf("%-10d %-15s %-15s %-20s %-10s %-20s %-10s %-10s %-10s %-10s\n", id, protocol_type, interface_type, src_ip, src_port, dst_ip, dst_port, begin_time, end_time, action);
+            printf("%-10d %-20s %-20s %-20s %-20s %-20s %-20s %-20s %-20s %-10s\n", id, protocol_type, interface_type, src_ip, src_port, dst_ip, dst_port, begin_time, end_time, action);
         }
     }
 
