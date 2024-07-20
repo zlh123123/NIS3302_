@@ -37,7 +37,7 @@ Rule getRuleById(int ruleID) {
 bool isRuleExist(const Rule *rule) {
     FILE *fp = fopen(RULE_FILE, "r");
     if (!fp) {
-        //perror("Failed to open rule file");
+        perror("\033[1;31m打开规则文件失败！\033[0m\n");
         return false;
     }
 
@@ -49,16 +49,19 @@ bool isRuleExist(const Rule *rule) {
         char *token;
         char *line_copy = strdup(line); // 复制一份 line，以免 strtok 修改原始数据
         if (!line_copy) {
-            perror("Failed to allocate memory");
+            perror("\033[1;31m内存分配失败！\033[0m\n");
             fclose(fp);
             return false;
         }
         char *rest = line_copy;
-
+	
+	// 分割ID
+        token = strtok_r(rest, ",", &rest);
+     
         // 比较协议类型
         token = strtok_r(rest, ",", &rest);
         if (!token) {
-            printf("Failed to parse protocol_type from line: %s\n", line);
+            printf("\033[1;31m协议类型无效！\033[0m\n");
             free(line_copy);
             continue;
         }
@@ -70,7 +73,7 @@ bool isRuleExist(const Rule *rule) {
         // 比较网络接口类型
         token = strtok_r(rest, ",", &rest);
         if (!token) {
-            printf("Failed to parse interface_type from line: %s\n", line);
+            printf("\033[1;31m网络接口类型无效！\033[0m\n");
             free(line_copy);
             continue;
         }
@@ -82,7 +85,7 @@ bool isRuleExist(const Rule *rule) {
         // 比较源IP地址
         token = strtok_r(rest, ",", &rest);
         if (!token) {
-            printf("Failed to parse src_ip from line: %s\n", line);
+            printf("\033[1;31m源IP地址无效！\033[0m\n");
             free(line_copy);
             continue;
         }
@@ -94,7 +97,7 @@ bool isRuleExist(const Rule *rule) {
         // 比较源端口号
         token = strtok_r(rest, ",", &rest);
         if (!token) {
-            printf("Failed to parse src_port from line: %s\n", line);
+            printf("\033[1;31m源端口号无效！\033[0m\n");
             free(line_copy);
             continue;
         }
@@ -106,7 +109,7 @@ bool isRuleExist(const Rule *rule) {
         // 比较目的IP地址
         token = strtok_r(rest, ",", &rest);
         if (!token) {
-            printf("Failed to parse dst_ip from line: %s\n", line);
+            printf("\033[1;31m目的IP地址无效！\033[0m\n");
             free(line_copy);
             continue;
         }
@@ -118,7 +121,7 @@ bool isRuleExist(const Rule *rule) {
         // 比较目的端口号
         token = strtok_r(rest, ",", &rest);
         if (!token) {
-            printf("Failed to parse dst_port from line: %s\n", line);
+            printf("\033[1;31m目的端口号无效！\033[0m\n");
             free(line_copy);
             continue;
         }
@@ -130,7 +133,7 @@ bool isRuleExist(const Rule *rule) {
         // 比较开始时间
         token = strtok_r(rest, ",", &rest);
         if (!token) {
-            printf("Failed to parse begin_time from line: %s\n", line);
+            printf("\033[1;31m开始时间无效！\033[0m\n");
             free(line_copy);
             continue;
         }
@@ -142,7 +145,7 @@ bool isRuleExist(const Rule *rule) {
         // 比较结束时间
         token = strtok_r(rest, ",", &rest);
         if (!token) {
-            printf("Failed to parse end_time from line: %s\n", line);
+            printf("\033[1;31m结束时间无效！\033[0m\n");
             free(line_copy);
             continue;
         }
@@ -154,7 +157,7 @@ bool isRuleExist(const Rule *rule) {
         // 比较执行动作
         token = strtok_r(rest, ",", &rest);
         if (!token) {
-            printf("Failed to parse action from line: %s\n", line);
+            printf("\033[1;31m执行动作无效！\033[0m\n");
             free(line_copy);
             continue;
         }
@@ -185,8 +188,8 @@ bool isRuleEmpty(const Rule *rule) {
 }
 
 bool isValidProtocolType(const char* protocolType) {
-    const char* valid_protocols[] = {"tcp", "udp", "icmp", "all", NULL};
-    for (int i = 0; valid_protocols[i] != NULL; i++) {
+    const char* valid_protocols[] = {"tcp", "udp", "icmp", "$"};
+    for (int i = 0; i < 4; i++) {
         if (strcmp(protocolType, valid_protocols[i]) == 0) {
             return true;
         }
@@ -196,11 +199,11 @@ bool isValidProtocolType(const char* protocolType) {
 }
 
 bool isValidInterfaceType(const char *interfaceType) {
-    if (interfaceType == NULL) {
-        return false;  
+    if (strcmp(interfaceType, "$") == 0) {
+        return true;  
     }
-    const char *valid_interfaces[] = {"eth0", "eth1", "wlan0", NULL};
-    for (int i = 0; valid_interfaces[i]; i++) {
+    const char *valid_interfaces[] = {"eth0", "eth1", "wlan0","ens33", "$"};
+    for (int i = 0; i < 5; i++) {
         if (strcmp(interfaceType, valid_interfaces[i]) == 0) {
             return true;
         }
@@ -209,7 +212,7 @@ bool isValidInterfaceType(const char *interfaceType) {
 }
 
 bool isValidIP(const char* ip) {
-    if (strcmp(ip, "") == 0) {
+    if (strcmp(ip, "$") == 0) {
         return true;
     }
 
@@ -222,7 +225,7 @@ bool isValidIP(const char* ip) {
 }
 
 bool isValidPort(const char* port) {
-    if (strcmp(port, "") == 0) {
+    if (strcmp(port, "$") == 0) {
         return true;
     }
 
@@ -246,7 +249,7 @@ bool isValidPort(const char* port) {
 }
 
 bool isValidTime(const char* time) {
-    if (strcmp(time, "") == 0) {
+    if (strcmp(time, "$") == 0) {
         return true;
     }
 
@@ -285,7 +288,7 @@ bool isValidTime(const char* time) {
 
 
 bool isBeginTimeBeforeEndTime(const char* beginTime, const char* endTime) {
-    if (strcmp(beginTime, "") == 0 || strcmp(endTime, "") == 0) {
+    if (strcmp(beginTime, "$") == 0 || strcmp(endTime, "$") == 0) {
         return true;  // 如果任一时间为空，假定无需比较
     }
 

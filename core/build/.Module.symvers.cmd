@@ -1,1 +1,1 @@
-savedcmd_/home/zlh/Desktop/NIS3302_/core/Module.symvers :=  scripts/mod/modpost -m -a      -o /home/zlh/Desktop/NIS3302_/core/Module.symvers -T /home/zlh/Desktop/NIS3302_/core/modules.order -i Module.symvers -e 
+savedcmd_/home/zlh/Desktop/demo/NIS3302_/core/Module.symvers :=  scripts/mod/modpost -m -a      -o /home/zlh/Desktop/demo/NIS3302_/core/Module.symvers -T /home/zlh/Desktop/demo/NIS3302_/core/modules.order -i Module.symvers -e 

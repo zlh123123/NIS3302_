@@ -29,8 +29,9 @@
 #include <linux/semaphore.h>
 
 #define MAX_RULES_NUM 30                 // 最大规则数
-#define MAX_INPUT_STR_LEN 3200           // 最大输入字符串长度
+#define MAX_INPUT_STR_LEN 9999           // 最大输入字符串长度
 #define LOG_FILE "/var/log/firewall.log" // 日志文件路径
+#define DEV_FILE "controlinfo"           // 设备文件名
 
 struct Rule
 {
@@ -48,21 +49,13 @@ struct Rule
 static struct Rule rules[MAX_RULES_NUM]; // 规则数组
 static int rules_num = 0;                // 规则数量
 static char device[MAX_INPUT_STR_LEN];   // 设备缓冲区
-static struct semaphore sem;             // 信号量
-static wait_queue_head_t wq;             // 等待队列
-struct file *filep = NULL;               // 文件指针
-loff_t pos = 0;                          // 文件偏移量
-struct rw_semaphore file_lock;           // 文件锁
-char buf_log[100];                       // 日志缓冲区
-static struct nf_hook_ops *nfho = NULL;  // 网络过滤钩子
-
-/*
- * name:xif
- * coder:xifan@2010@yahoo.cn
- * time:08.20.2012
- * file_name:my_atoi.c
- * function:int my_atoi(char* pstr)
- */
+// static struct semaphore sem;             // 信号量
+static DECLARE_WAIT_QUEUE_HEAD(wq); // 等待队列
+struct file *filep = NULL;          // 文件指针
+loff_t pos = 0;                     // 文件偏移量
+// struct rw_semaphore file_lock;           // 文件锁
+char buf_log[256];                      // 日志缓冲区
+static struct nf_hook_ops *nfho = NULL; // 网络过滤钩子
 
 int atoi(char *pstr)
 {
@@ -106,22 +99,34 @@ int atoi(char *pstr)
 // 检查源ip和目的ip是否在规则范围内
 bool check_ip(const struct sk_buff *skb, const struct Rule *rule)
 {
+    // 打印rule的全部信息
+    // printk(KERN_INFO "rule_id=%d\n", rule->id);
+    // printk(KERN_INFO "rule_protocol_type=%s\n", rule->protocol_type);
+    // printk(KERN_INFO "rule_interface_type=%s\n", rule->interface_type);
+    // printk(KERN_INFO "rule_src_ip=%s\n", rule->src_ip);
+    // printk(KERN_INFO "rule_src_port=%s\n", rule->src_port);
+    // printk(KERN_INFO "rule_dst_ip=%s\n", rule->dst_ip);
+    // printk(KERN_INFO "rule_dst_port=%s\n", rule->dst_port);
+    // printk(KERN_INFO "rule_begin_time=%s\n", rule->begin_time);
+    // printk(KERN_INFO "rule_end_time=%s\n", rule->end_time);
+
+    // printk(KERN_INFO "start check_ip\n");
     struct iphdr *iph = ip_hdr(skb); // 获取ip头部
-    // 转换为主机字节序, 并获取源ip和目的ip
-    __be32 src_ip = ntohl(iph->saddr);
-    __be32 dst_ip = ntohl(iph->daddr);
-    // 转换为字符串
-    char src_ip_str[16]; // 16位是因为最大的IP地址长度是15位
+    char src_ip_str[16];
     char dst_ip_str[16];
-    sprintf(src_ip_str, "%u.%u.%u.%u", src_ip & 0xff, (src_ip >> 8) & 0xff, (src_ip >> 16) & 0xff, (src_ip >> 24) & 0xff); // 将IP地址转换为字符串
-    sprintf(dst_ip_str, "%u.%u.%u.%u", dst_ip & 0xff, (dst_ip >> 8) & 0xff, (dst_ip >> 16) & 0xff, (dst_ip >> 24) & 0xff);
-    // 检查源ip
-    if (strcmp(rule->src_ip, "*") != 0 && strcmp(rule->src_ip, src_ip_str) != 0)
+    sprintf(src_ip_str, "%pI4", &iph->saddr);
+    sprintf(dst_ip_str, "%pI4", &iph->daddr);
+
+    // printk(KERN_INFO "src_ip=%s, dst_ip=%s\n", src_ip_str, dst_ip_str);
+    // printk(KERN_INFO "rule_src_ip=%s, rule_dst_ip=%s\n", rule->src_ip, rule->dst_ip);
+
+    //  检查源ip
+    if (strcmp(rule->src_ip, "$") != 0 && strcmp(rule->src_ip, dst_ip_str) != 0)
     {
         return false;
     }
     // 检查目的ip
-    if (strcmp(rule->dst_ip, "*") != 0 && strcmp(rule->dst_ip, dst_ip_str) != 0)
+    if (strcmp(rule->dst_ip, "$") != 0 && strcmp(rule->dst_ip, src_ip_str) != 0)
     {
         return false;
     }
@@ -133,8 +138,11 @@ bool check_port(const struct sk_buff *skb, const struct Rule *rule)
 {
     struct tcphdr *tcph = tcp_hdr(skb); // 获取tcp头部
     struct udphdr *udph = udp_hdr(skb); // 获取udp头部
+    // 输出端口号和规则端口号
+    // printk(KERN_INFO "src_port=%d, dst_port=%d\n", ntohs(tcph->source), ntohs(tcph->dest));
+    // printk(KERN_INFO "rule_src_port=%s, rule_dst_port=%s\n", rule->src_port, rule->dst_port);
     // 检查源端口
-    if (strcmp(rule->src_port, "*") != 0)
+    if (strcmp(rule->src_port, "$") != 0)
     {
         if (tcph != NULL && ntohs(tcph->source) != atoi(rule->src_port))
         {
@@ -146,7 +154,7 @@ bool check_port(const struct sk_buff *skb, const struct Rule *rule)
         }
     }
     // 检查目的端口
-    if (strcmp(rule->dst_port, "*") != 0)
+    if (strcmp(rule->dst_port, "$") != 0)
     {
         if (tcph != NULL && ntohs(tcph->dest) != atoi(rule->dst_port))
         {
@@ -164,40 +172,135 @@ bool check_port(const struct sk_buff *skb, const struct Rule *rule)
 bool check_interface(const struct sk_buff *skb, const struct Rule *rule)
 {
     struct net_device *in = skb->dev; // 获取网络接口
+    // 输出网络接口和规则网络接口
+    // printk(KERN_INFO "interface_type=%s\n", in->name);
+    // printk(KERN_INFO "rule_interface_type=%s\n", rule->interface_type);
     // 检查网络接口
-    if (strcmp(rule->interface_type, "*") != 0 && strcmp(rule->interface_type, in->name) != 0)
+    if (strcmp(rule->interface_type, "$") != 0 && strcmp(rule->interface_type, in->name) != 0)
     {
         return false;
     }
     return true;
 }
 
+// 比较两个时间字符串的大小，字符串格式为"YYYY-MM-DD HH:MM:SS"，返回值为1表示time1大于time2，返回值为0表示time1等于time2，返回值为-1表示time1小于time2
+int istimebig(const char *time1, const char *time2)
+{
+    int year1, month1, day1, hour1, minute1, second1;
+    int year2, month2, day2, hour2, minute2, second2;
+    sscanf(time1, "%d-%d-%d %d:%d:%d", &year1, &month1, &day1, &hour1, &minute1, &second1);
+    sscanf(time2, "%d-%d-%d %d:%d:%d", &year2, &month2, &day2, &hour2, &minute2, &second2);
+    if (year1 > year2)
+    {
+        return 1;
+    }
+    else if (year1 < year2)
+    {
+        return -1;
+    }
+    else
+    {
+        if (month1 > month2)
+        {
+            return 1;
+        }
+        else if (month1 < month2)
+        {
+            return -1;
+        }
+        else
+        {
+            if (day1 > day2)
+            {
+                return 1;
+            }
+            else if (day1 < day2)
+            {
+                return -1;
+            }
+            else
+            {
+                if (hour1 > hour2)
+                {
+                    return 1;
+                }
+                else if (hour1 < hour2)
+                {
+                    return -1;
+                }
+                else
+                {
+                    if (minute1 > minute2)
+                    {
+                        return 1;
+                    }
+                    else if (minute1 < minute2)
+                    {
+                        return -1;
+                    }
+                    else
+                    {
+                        if (second1 > second2)
+                        {
+                            return 1;
+                        }
+                        else if (second1 < second2)
+                        {
+                            return -1;
+                        }
+                        else
+                        {
+                            return 0;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 // 检查时间是否在规则时间范围内，字符串格式为"YYYY-MM-DD HH:MM:SS"
 bool check_time(const char *cur_time, const char *begin_time, const char *end_time)
 {
-    // 如果对begin_time无要求
-    if (strcmp(begin_time, "*") == 0)
-    {
-        if (strcmp(cur_time, end_time) <= 0)
-        {
-            return true;
-        }
-        return false;
-    }
-    // 如果对end_time无要求
-    if (strcmp(end_time, "*") == 0)
-    {
-        if (strcmp(cur_time, begin_time) >= 0)
-        {
-            return true;
-        }
-        return false;
-    }
-
-    if (strcmp(cur_time, begin_time) >= 0 && strcmp(cur_time, end_time) <= 0)
+    // 如果对时间无要求
+    if (strcmp(begin_time, "$") == 0 && strcmp(end_time, "$") == 0)
     {
         return true;
     }
+    // 如果对begin_time无要求
+    if (strcmp(begin_time, "$") == 0)
+    {
+        if (istimebig(cur_time, end_time) <= 0)
+        {
+            return true;
+        }
+        else
+        {
+            return false;
+        }
+    }
+    // 如果对end_time无要求
+    if (strcmp(end_time, "$") == 0)
+    {
+        if (istimebig(cur_time, begin_time) >= 0)
+        {
+            return true;
+        }
+        else
+        {
+            return false;
+        }
+    }
+    // 如果对时间有要求
+    if (istimebig(cur_time, begin_time) >= 0 && istimebig(cur_time, end_time) <= 0)
+    {
+        return true;
+    }
+    else
+    {
+        return false;
+    }
+
     return false;
 }
 
@@ -206,21 +309,25 @@ bool check_rule(const struct sk_buff *skb, const struct Rule *rule)
 {
     // 检查协议类型
     int protocol = ip_hdr(skb)->protocol;
-    if (strcmp(rule->protocol_type, "*") != 0)
+    if (strcmp(rule->protocol_type, "$") != 0)
     {
-        if (strcmp(rule->protocol_type, "TCP") == 0 && protocol != IPPROTO_TCP)
+        if (strcmp(rule->protocol_type, "tcp") == 0 && protocol != IPPROTO_TCP)
         {
             return false;
         }
-        if (strcmp(rule->protocol_type, "UDP") == 0 && protocol != IPPROTO_UDP)
+        if (strcmp(rule->protocol_type, "udp") == 0 && protocol != IPPROTO_UDP)
         {
             return false;
         }
-        if (strcmp(rule->protocol_type, "ICMP") == 0 && protocol != IPPROTO_ICMP)
+
+        if (strcmp(rule->protocol_type, "icmp") == 0 && protocol != IPPROTO_ICMP)
         {
             return false;
         }
     }
+    // printk(KERN_INFO "protocol_type: %s\n", protocol == IPPROTO_TCP ? "tcp" : protocol == IPPROTO_UDP ? "udp"
+    //                                                                                                  : "icmp");
+    // printk(KERN_INFO "protocol_type: %s\n", rule->src_ip);
 
     // 检查ip
     if (!check_ip(skb, rule))
@@ -247,6 +354,10 @@ bool check_rule(const struct sk_buff *skb, const struct Rule *rule)
 
     sprintf(cur_time, "%04ld-%02d-%02d %02d:%02d:%02d", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday + shiqu, (tm.tm_hour + 8) % 24, tm.tm_min, tm.tm_sec);
 
+    // printk(KERN_INFO "cur_time=%s\n", cur_time);
+    // printk(KERN_INFO "begin_time=%s, end_time=%s\n", rule->begin_time, rule->end_time);
+    // printk(KERN_INFO "check_time=%d\n", istimebig(rule->begin_time, rule->end_time));
+
     if (!check_time(cur_time, rule->begin_time, rule->end_time))
     {
         return false;
@@ -267,65 +378,61 @@ static int print_log(const char *log)
     }
 
     // 获取文件锁
-    down_write(&file_lock);
+    // down_write(&file_lock);
 
     kernel_write(filep, buf_log, len, &pos);
 
     // 释放文件锁
-    up_write(&file_lock);
+    // up_write(&file_lock);
 
     return 0;
 }
 
 // 将读取到的字符串解析并保存在结构体数组中，即分割字符串，将每个规则保存在一个结构体中
+// 每个规则之间用分号分割，规则的每个字段之间用逗号分割
+// 不需要错误处理，其在用户态已经处理过
 static void parse_rules(void)
 {
-    char *cur = device;
-    char *str_rule;
-    // 每个规则之间用\n分割，规则的每个字段之间用空格分割
-    const char *delim_rule = "\n";
-    const char *delim_field = " ";
-    while ((str_rule = strsep(&cur, delim_rule)) != NULL && rules_num < MAX_RULES_NUM)
+    char *p = device;
+    char *q = device;
+    while (*p != '\0')
     {
-        struct Rule rule;
-        char *field;
-        int field_num = 0;
-        memset(&rule, 0, sizeof(struct Rule));
-        while ((field = strsep(&str_rule, delim_field)) != NULL)
+        if (*p == ';')
         {
-            // 根据字段编号保存到结构体中，注意加上错误提示
-            switch (field_num)
-            {
-            case 0:
-                rule.protocol_type = field;
-                break;
-            case 1:
-                rule.interface_type = field;
-                break;
-            case 2:
-                rule.src_ip = field;
-                break;
-            case 3:
-                rule.src_port = field;
-                break;
-            case 4:
-                rule.dst_ip = field;
-                break;
-            case 5:
-                rule.dst_port = field;
-                break;
-            case 6:
-                rule.begin_time = field;
-                break;
-            case 7:
-                rule.end_time = field;
-                break;
-            default:
-                break;
-            }
-            field_num++;
+            *p = '\0';
+            char *rule = q;
+            q = p + 1;
+            char *protocol_type = strsep(&rule, ",");
+            char *interface_type = strsep(&rule, ",");
+            char *src_ip = strsep(&rule, ",");
+            char *src_port = strsep(&rule, ",");
+            char *dst_ip = strsep(&rule, ",");
+            char *dst_port = strsep(&rule, ",");
+            char *begin_time = strsep(&rule, ",");
+            char *end_time = strsep(&rule, ",");
+            // 保存规则
+            rules[rules_num].id = rules_num;
+            rules[rules_num].protocol_type = kstrdup(protocol_type, GFP_KERNEL);
+            rules[rules_num].interface_type = kstrdup(interface_type, GFP_KERNEL);
+            rules[rules_num].src_ip = kstrdup(src_ip, GFP_KERNEL);
+            rules[rules_num].src_port = kstrdup(src_port, GFP_KERNEL);
+            rules[rules_num].dst_ip = kstrdup(dst_ip, GFP_KERNEL);
+            rules[rules_num].dst_port = kstrdup(dst_port, GFP_KERNEL);
+            rules[rules_num].begin_time = kstrdup(begin_time, GFP_KERNEL);
+            rules[rules_num].end_time = kstrdup(end_time, GFP_KERNEL);
+            rules_num++;
+
+            // test
+            // printk(KERN_INFO "protocol_type: %s\n", rules[rules_num - 1].protocol_type);
+            // printk(KERN_INFO "interface_type: %s\n", rules[rules_num - 1].interface_type);
+            // printk(KERN_INFO "src_ip: %s\n", rules[rules_num - 1].src_ip);
+            // printk(KERN_INFO "src_port: %s\n", rules[rules_num - 1].src_port);
+            // printk(KERN_INFO "dst_ip: %s\n", rules[rules_num - 1].dst_ip);
+            // printk(KERN_INFO "dst_port: %s\n", rules[rules_num - 1].dst_port);
+            // printk(KERN_INFO "begin_time: %s\n", rules[rules_num - 1].begin_time);
+            // printk(KERN_INFO "end_time: %s\n", rules[rules_num - 1].end_time);
         }
-        rules[rules_num++] = rule;
+        p++;
     }
 }
 
@@ -333,7 +440,7 @@ static void parse_rules(void)
 // 参数分别表示文件指针，用户缓冲区，读取的字节数，偏移量
 static ssize_t read_control(struct file *file, char __user *buf, size_t count, loff_t *ppos)
 {
-    int temp = simple_read_from_buffer(buf, count, ppos, device, strlen(device)); // 从device中读取数据到buf中,返回值为读取的字节数
+    int temp = simple_read_from_buffer(buf, count, ppos, device, MAX_INPUT_STR_LEN); // 从device中读取数据到buf中,返回值为读取的字节数
     return temp;
 }
 
@@ -347,13 +454,13 @@ static ssize_t write_control(struct file *file, const char __user *buf, size_t c
         rules_num = 0;
         memset(rules, 0, sizeof(rules));
         // 解析规则,注意信号量
-        if (down_interruptible(&sem))
-        { // 获取信号量
-            // 进入临界区
-            wait_event_interruptible(wq, 1);
-        }
+        // if (down_interruptible(&sem))
+        // { // 获取信号量
+        //     // 进入临界区
+        //     wait_event_interruptible(wq, (sem.count > 0));
+        // }
         parse_rules();
-        up(&sem); // 释放信号量
+        // up(&sem); // 释放信号量
     }
     // 初始化设备缓冲区
     memset(device, 0, MAX_INPUT_STR_LEN);
@@ -365,55 +472,118 @@ static ssize_t write_control(struct file *file, const char __user *buf, size_t c
 // 注意信号量的使用
 static unsigned int hook_func(void *priv, struct sk_buff *skb, const struct nf_hook_state *state)
 {
-    if (down_interruptible(&sem))
-    {
-        wait_event_interruptible(wq, 1);
-    }
+    // 打印skb内容中的源ip和目的ip
+    // printk(KERN_INFO "src_ip=%pI4, dst_ip=%pI4\n", &ip_hdr(skb)->saddr, &ip_hdr(skb)->daddr);
+
+    // if (down_interruptible(&sem))
+    // {
+    //     wait_event_interruptible(wq, (sem.count > 0));
+    // }
+    // 打印数据包的协议类型
+    // printk(KERN_INFO "protocol_type: %d\n", ip_hdr(skb)->protocol);
     int i;
     for (i = 0; i < rules_num; i++)
     {
+        // printk(KERN_INFO "check rule %d\n", i);
         if (check_rule(skb, &rules[i]))
         {
-            // 打印日志
-            char log[100];
-            struct iphdr *iph = ip_hdr(skb);
-            struct tcphdr *tcph = tcp_hdr(skb);
-            struct udphdr *udph = udp_hdr(skb);
-            struct icmphdr *icmph = icmp_hdr(skb);
+            // printk(KERN_INFO "rule %d matched\n", i);
+            //  打印日志
+            char log[200];
+            // struct iphdr *iph = ip_hdr(skb);
+            // struct tcphdr *tcph = tcp_hdr(skb);
+            // struct udphdr *udph = udp_hdr(skb);
+            // struct icmphdr *icmph = icmp_hdr(skb);
+            // char src_ip[16];
+            // char dst_ip[16];
+            // sprintf(src_ip, "%pI4", &iph->saddr);
+            // sprintf(dst_ip, "%pI4", &iph->daddr);
+            // if (tcph != NULL)
+            // {
+            //     sprintf(log, "Blocked TCP packet: src_ip=%s, src_port=%d, dst_ip=%s, dst_port=%d\n", src_ip, ntohs(tcph->source), dst_ip, ntohs(tcph->dest));
+            // }
+            // else if (udph != NULL)
+            // {
+            //     sprintf(log, "Blocked UDP packet: src_ip=%s, src_port=%d, dst_ip=%s, dst_port=%d\n", src_ip, ntohs(udph->source), dst_ip, ntohs(udph->dest));
+            // }
+            // else if (icmph != NULL)
+            // {
+            //     sprintf(log, "Blocked ICMP packet: src_ip=%s, dst_ip=%s\n", src_ip, dst_ip);
+            // }
+            // 输出格式为[时间] 协议类型 源IP:源端口 -> 目的IP:目的端口,时间格式为"YYYY-MM-DD HH:MM:SS"
+            struct timespec64 tv;
+            struct tm tm;
+            char cur_time[20];
+            ktime_get_real_ts64(&tv);
+            time64_to_tm(tv.tv_sec, 0, &tm);
+            int shiqu = (tm.tm_hour + 8) / 24;
+
+            sprintf(cur_time, "%04ld-%02d-%02d %02d:%02d:%02d", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday + shiqu, (tm.tm_hour + 8) % 24, tm.tm_min, tm.tm_sec);
+
             char src_ip[16];
             char dst_ip[16];
-            sprintf(src_ip, "%pI4", &iph->saddr);
-            sprintf(dst_ip, "%pI4", &iph->daddr);
+            sprintf(src_ip, "%pI4", &ip_hdr(skb)->saddr);
+            sprintf(dst_ip, "%pI4", &ip_hdr(skb)->daddr);
+
+            // 获取skb的协议类型
+            char *protocol_type;
+            if (ip_hdr(skb)->protocol == IPPROTO_TCP)
+            {
+                protocol_type = "TCP";
+            }
+            else if (ip_hdr(skb)->protocol == IPPROTO_UDP)
+            {
+                protocol_type = "UDP";
+            }
+            else if (ip_hdr(skb)->protocol == IPPROTO_ICMP)
+            {
+                protocol_type = "ICMP";
+            }
+            else
+            {
+                protocol_type = "UNKNOWN";
+            }
+            // 获取源端口和目的端口
+            struct tcphdr *tcph = tcp_hdr(skb);
+            struct udphdr *udph = udp_hdr(skb);
+            char src_port[6];
+            char dst_port[6];
+
             if (tcph != NULL)
             {
-                sprintf(log, "Blocked TCP packet: src_ip=%s, src_port=%d, dst_ip=%s, dst_port=%d\n", src_ip, ntohs(tcph->source), dst_ip, ntohs(tcph->dest));
+                sprintf(src_port, "%d", ntohs(tcph->source));
+                sprintf(dst_port, "%d", ntohs(tcph->dest));
             }
             else if (udph != NULL)
             {
-                sprintf(log, "Blocked UDP packet: src_ip=%s, src_port=%d, dst_ip=%s, dst_port=%d\n", src_ip, ntohs(udph->source), dst_ip, ntohs(udph->dest));
+                sprintf(src_port, "%d", ntohs(udph->source));
+                sprintf(dst_port, "%d", ntohs(udph->dest));
             }
-            else if (icmph != NULL)
+            else
             {
-                sprintf(log, "Blocked ICMP packet: src_ip=%s, dst_ip=%s\n", src_ip, dst_ip);
+                sprintf(src_port, "0");
+                sprintf(dst_port, "0");
             }
+
+            sprintf(log, "[%s] %s %s:%s -> %s:%s\n", cur_time, protocol_type, src_ip, src_port, dst_ip, dst_port);
 
             print_log(log);
             return NF_DROP;
         }
     }
-    up(&sem);
+    // up(&sem);
     return NF_ACCEPT;
 }
 
 // 字符设备注册
-struct file_operations fops = {
+static const struct file_operations fops = {
     .owner = THIS_MODULE,
     .read = read_control,
     .write = write_control,
 };
-struct miscdevice misc = {
+static struct miscdevice misc = {
     .minor = MISC_DYNAMIC_MINOR,
-    .name = "firewall",
+    .name = DEV_FILE,
     .fops = &fops,
 };
 
@@ -423,7 +593,7 @@ static int __init firewall_init(void)
 
     printk(KERN_INFO "Firewall module loaded\n");
     // 初始化设备文件
-    struct file *file = filp_open(LOG_FILE, O_RDWR | O_CREAT, 0644);
+    struct file *file = filp_open(LOG_FILE, O_RDWR | O_CREAT | O_APPEND, 0644);
     if (IS_ERR(file))
     {
         pr_err("Failed to open file\n");
@@ -431,7 +601,7 @@ static int __init firewall_init(void)
     }
     filep = file;
     // 初始化文件锁
-    init_rwsem(&file_lock);
+    // init_rwsem(&file_lock);
 
     misc_register(&misc); // 注册设备
 
@@ -445,15 +615,15 @@ static int __init firewall_init(void)
     }
     nfho->hook = hook_func;              // 数据包处理函数
     nfho->hooknum = NF_INET_PRE_ROUTING; // 钩子位置
-    nfho->pf = PF_INET;                  // 协议族
+    nfho->pf = NFPROTO_IPV4;             // 协议族
     nfho->priority = NF_IP_PRI_FIRST;    // 优先级
 
     nf_register_net_hook(&init_net, nfho);
     // 初始化设备缓冲区
     memset(device, 0, MAX_INPUT_STR_LEN);
     // 初始化信号量
-    sema_init(&sem, 1);
-    init_waitqueue_head(&wq);
+    // sema_init(&sem, 1);
+    // init_waitqueue_head(&wq);
     return 0;
 }
 
@@ -477,8 +647,10 @@ static void __exit firewall_exit(void)
         kfree(rules[i].begin_time);
         kfree(rules[i].end_time);
     }
-    // 关闭文件
+
+    // 删除LOG_FILE中的内容
     filp_close(filep, NULL);
+
     // 清空规则数组
     rules_num = 0;
     memset(rules, 0, sizeof(rules));
